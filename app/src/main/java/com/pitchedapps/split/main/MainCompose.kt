@@ -2,18 +2,17 @@ package com.pitchedapps.split.main
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.Button
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
 import coil.compose.rememberAsyncImagePainter
+import com.pitchedapps.split.ocr.ReceiptOcr
 import com.pitchedapps.split.ui.theme.SplitTheme
 import kotlinx.coroutines.launch
 
@@ -26,17 +25,31 @@ fun MainContent(viewModel: MainViewModel, selectImage: suspend () -> Unit) {
             modifier = Modifier.fillMaxSize(),
             color = MaterialTheme.colorScheme.background
         ) {
-            Box {
-                when (val receiptImage: ReceiptImage = viewModel.receiptImage) {
-                    is ReceiptImage.Loaded -> {
-                        BackHandler {
-                            viewModel.receiptImage = ReceiptImage.Pending
+            when (val data = viewModel.receiptImage) {
+                is ReceiptImage.Pending -> {
+                    SelectScreen(action = selectImage)
+                }
+                is ReceiptImage.Error -> {
+                    SelectScreen(action = selectImage, message = data.message)
+                }
+                is ReceiptImage.Loaded -> {
+                    BackHandler {
+                        viewModel.receiptImage = ReceiptImage.Pending
+                    }
+                    ParsingScreen(data = data, onResult = {
+                        if (it == null) {
+                            viewModel.receiptImage = ReceiptImage.Error("could not load data")
+                        } else {
+                            viewModel.receiptImage =
+                                ReceiptImage.Parsed(uri = data.uri, data = it)
                         }
-                        PreviewScreen(receiptImage = receiptImage)
+                    })
+                }
+                is ReceiptImage.Parsed -> {
+                    BackHandler {
+                        viewModel.receiptImage = ReceiptImage.Pending
                     }
-                    else -> {
-                        SelectScreen(action = selectImage)
-                    }
+                    PreviewScreen(data = data)
                 }
             }
         }
@@ -44,24 +57,62 @@ fun MainContent(viewModel: MainViewModel, selectImage: suspend () -> Unit) {
 }
 
 @Composable
-fun SelectScreen(action: suspend () -> Unit) {
+fun SelectScreen(action: suspend () -> Unit, message: String? = null) {
     val scope = rememberCoroutineScope()
-
-    Button(onClick = {
-        scope.launch {
-            action()
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .fillMaxHeight(0.7f)
+                .fillMaxWidth()
+                .align(Alignment.Center),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Button(onClick = {
+                scope.launch {
+                    action()
+                }
+            }) {
+                Text("Select Image")
+            }
+            Spacer(modifier = Modifier.height(24.dp))
+            if (message != null) {
+                Text(text = message, textAlign = TextAlign.Center)
+            }
         }
-    }) {
-        Text("Select Image")
     }
 }
 
 @Composable
-fun PreviewScreen(receiptImage: ReceiptImage.Loaded) {
+fun ParsingScreen(data: ReceiptImage.Loaded, onResult: (ReceiptOcr.Result?) -> Unit) {
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        CircularProgressIndicator(
+            modifier = Modifier
+                .size(64.dp)
+                .align(Alignment.Center)
+        )
+    }
+
+    LaunchedEffect(data) {
+        scope.launch {
+            val result = ReceiptOcr.read(context, data.uri)
+            onResult(result)
+        }
+    }
+}
+
+@Composable
+fun PreviewScreen(data: ReceiptImage.Parsed) {
+    var showImage by remember {
+        mutableStateOf(false)
+    }
+
     Column {
         Text("Preview")
         Image(
-            painter = rememberAsyncImagePainter(receiptImage.uri),
+            painter = rememberAsyncImagePainter(data.uri),
             contentDescription = "Preview Image"
         )
     }
